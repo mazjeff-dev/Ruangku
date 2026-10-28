@@ -1,0 +1,91 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  ADMIN
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(100)
+  email     String   @unique @db.VarChar(150)
+  password  String   @db.VarChar(255)
+  nim       String?  @unique @db.VarChar(30)
+  role      UserRole @default(STUDENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings       Booking[]    @relation("StudentBookings")
+  reviewedBookings Booking[]  @relation("BookingReviewer")
+  bookingLogs    BookingLog[]
+}
+
+model Room {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  code        String   @unique @db.VarChar(30)
+  location    String   @db.VarChar(150)
+  capacity    Int
+  description String?  @db.Text
+  facilities  String?  @db.Text
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  bookings Booking[]
+}
+
+model Booking {
+  id          Int           @id @default(autoincrement())
+  userId      Int
+  roomId      Int
+  title       String        @db.VarChar(150)
+  purpose     String        @db.Text
+  startTime   DateTime
+  endTime     DateTime
+  status      BookingStatus @default(PENDING)
+  adminNote   String?       @db.Text
+  reviewedBy  Int?
+  reviewedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  student User  @relation("StudentBookings", fields: [userId], references: [id])
+  room    Room  @relation(fields: [roomId], references: [id])
+  reviewer User? @relation("BookingReviewer", fields: [reviewedBy], references: [id])
+
+  logs BookingLog[]
+
+  @@index([roomId, startTime, endTime])
+  @@index([userId, status])
+}
+
+model BookingLog {
+  id        Int      @id @default(autoincrement())
+  bookingId Int
+  userId    Int
+  action    String   @db.VarChar(50)
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([bookingId, createdAt])
+}
