@@ -1,5 +1,5 @@
 
-import type { Request, Response } from "express";
+import type { Response } from "express";
 import { prisma } from "../lib/prisma";
 import type { AuthRequest } from "../middleware/auth.middleware";
 
@@ -60,6 +60,17 @@ export async function createBooking(
       });
     }
 
+    const room = await prisma.room.findUnique({
+      where: { id: Number(roomId) },
+    });
+
+    if (!room || !room.isAvailable) {
+      return res.status(404).json({
+        success: false,
+        message: "Ruangan tidak ditemukan atau tidak tersedia",
+      });
+    }
+
     const conflictingBooking = await prisma.booking.findFirst({
         where: {
             roomId: Number(roomId),
@@ -80,17 +91,6 @@ export async function createBooking(
             success: false,
             message: "Jadwal ruangan bentrok dengan pengajuan lain",
         });
-    }
-
-    const room = await prisma.room.findUnique({
-      where: { id: Number(roomId) },
-    });
-
-    if (!room || !room.isAvailable) {
-      return res.status(404).json({
-        success: false,
-        message: "Ruangan tidak ditemukan atau tidak tersedia",
-      });
     }
 
     const booking = await prisma.booking.create({

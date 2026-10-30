@@ -115,7 +115,10 @@ export async function reviewBooking(
 }
 
 
-export const getAllBookings = async (req: any, res: any) => {
+export async function getAllBookings(
+  _req: AuthRequest,
+  res: Response
+) {
   try {
     const bookings = await prisma.booking.findMany({
       orderBy: {
@@ -161,4 +164,4 @@ export const getAllBookings = async (req: any, res: any) => {
       message: "Terjadi kesalahan pada server",
     });
   }
-};
+}

@@ -1,14 +1,12 @@
+import "dotenv/config";
 import { prisma } from "./lib/prisma";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import authRoutes from "./routes/auth.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import roomRoutes from "./routes/room.routes.js";
 import bookingRoutes from "./routes/booking.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
-
-dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
