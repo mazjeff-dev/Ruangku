@@ -1,106 +1,62 @@
-
 import type { Response } from "express";
 import { prisma } from "../lib/prisma";
 import type { AuthRequest } from "../middleware/auth.middleware";
+import { HttpError, parse, parseId } from "../lib/http";
+import { findConflict, lockRoom } from "../lib/booking";
+import { notifyAdmins } from "../lib/notify";
+import { formatJakarta } from "../lib/time";
+import { createBookingSchema } from "../validators/booking";
 
 export async function createBooking(
   req: AuthRequest,
   res: Response
 ) {
-  try {
-    const { roomId, title, purpose, startTime, endTime } = req.body;
+  const input = parse<{
+    roomId: number;
+    title: string;
+    purpose: string;
+    startTime: Date;
+    endTime: Date;
+  }>(createBookingSchema, req.body);
 
-    if (
-      roomId === undefined ||
-      !title ||
-      !purpose ||
-      !startTime ||
-      !endTime
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Semua data peminjaman wajib diisi",
-      });
+  if (input.startTime <= new Date()) {
+    throw new HttpError(400, "Waktu mulai harus di masa depan");
+  }
+
+  const booking = await prisma.$transaction(async (tx) => {
+    // Kunci ruangan, lalu cek bentrok dan simpan dalam satu transaksi.
+    await lockRoom(tx, input.roomId);
+
+    const room = await tx.room.findUnique({ where: { id: input.roomId } });
+
+    if (!room || !room.isActive || !room.isAvailable) {
+      throw new HttpError(404, "Ruangan tidak ditemukan atau tidak tersedia");
     }
 
-    if (
-      !Number.isInteger(Number(roomId)) ||
-      Number(roomId) < 1 ||
-      typeof title !== "string" ||
-      typeof purpose !== "string" ||
-      typeof startTime !== "string" ||
-      typeof endTime !== "string" ||
-      !title.trim() ||
-      !purpose.trim()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Format data peminjaman tidak valid",
-      });
-    }
-
-    const start = new Date(startTime);
-    const end = new Date(endTime);
-
-    if (
-      Number.isNaN(start.getTime()) ||
-      Number.isNaN(end.getTime()) ||
-      end <= start
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Waktu selesai harus setelah waktu mulai",
-      });
-    }
-
-    if (start <= new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: "Waktu mulai harus di masa depan",
-      });
-    }
-
-    const room = await prisma.room.findUnique({
-      where: { id: Number(roomId) },
+    const conflict = await findConflict(tx, {
+      roomId: room.id,
+      start: input.startTime,
+      end: input.endTime,
+      statuses: ["PENDING", "APPROVED"],
     });
 
-    if (!room || !room.isAvailable) {
-      return res.status(404).json({
-        success: false,
-        message: "Ruangan tidak ditemukan atau tidak tersedia",
-      });
+    if (conflict) {
+      throw new HttpError(409, "Jadwal ruangan bentrok dengan pengajuan lain");
     }
 
-    const conflictingBooking = await prisma.booking.findFirst({
-        where: {
-            roomId: Number(roomId),
-            status: {
-                in: ["PENDING", "APPROVED"],
-            },
-            startTime: {
-                lt: end,
-            },
-            endTime: {
-                gt: start,
-            },
-        },
+    const student = await tx.user.findUniqueOrThrow({
+      where: { id: req.user!.userId },
+      select: { name: true },
     });
 
-    if (conflictingBooking) {
-        return res.status(409).json({
-            success: false,
-            message: "Jadwal ruangan bentrok dengan pengajuan lain",
-        });
-    }
-
-    const booking = await prisma.booking.create({
+    const created = await tx.booking.create({
       data: {
         userId: req.user!.userId,
         roomId: room.id,
-        title: title.trim(),
-        purpose: purpose.trim(),
-        startTime: start,
-        endTime: end,
+        title: input.title,
+        purpose: input.purpose,
+        startTime: input.startTime,
+        endTime: input.endTime,
         status: "PENDING",
         logs: {
           create: {
@@ -127,19 +83,21 @@ export async function createBooking(
       },
     });
 
-    return res.status(201).json({
-      success: true,
-      message: "Pengajuan peminjaman berhasil dibuat",
-      data: booking,
+    await notifyAdmins(tx, {
+      bookingId: created.id,
+      type: "BOOKING_SUBMITTED",
+      title: "Pengajuan peminjaman baru",
+      message: `${student.name} mengajukan ${room.name} untuk "${created.title}" pada ${formatJakarta(created.startTime)} WIB.`,
     });
-  } catch (error) {
-    console.error("Create booking error:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Terjadi kesalahan pada server",
-    });
-  }
+    return created;
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: "Pengajuan peminjaman berhasil dibuat",
+    data: booking,
+  });
 }
 
 
@@ -196,47 +154,28 @@ export async function cancelBooking(
   req: AuthRequest,
   res: Response
 ) {
-  try {
-    const bookingId = Number(req.params.id);
+  const bookingId = parseId(req.params.id, "ID pengajuan");
 
-    if (!Number.isInteger(bookingId) || bookingId < 1) {
-      return res.status(400).json({
-        success: false,
-        message: "ID pengajuan tidak valid",
-      });
-    }
-
-    const booking = await prisma.booking.findUnique({
-      where: {
-        id: bookingId,
-      },
+  const result = await prisma.$transaction(async (tx) => {
+    const booking = await tx.booking.findUnique({
+      where: { id: bookingId },
+      include: { room: { select: { name: true } }, student: { select: { name: true } } },
     });
 
     if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: "Pengajuan peminjaman tidak ditemukan",
-      });
+      throw new HttpError(404, "Pengajuan peminjaman tidak ditemukan");
     }
 
     if (booking.userId !== req.user!.userId) {
-      return res.status(403).json({
-        success: false,
-        message: "Kamu tidak berhak membatalkan pengajuan ini",
-      });
+      throw new HttpError(403, "Kamu tidak berhak membatalkan pengajuan ini");
     }
 
     if (booking.status !== "PENDING") {
-      return res.status(400).json({
-        success: false,
-        message: "Hanya pengajuan berstatus PENDING yang bisa dibatalkan",
-      });
+      throw new HttpError(400, "Hanya pengajuan berstatus PENDING yang bisa dibatalkan");
     }
 
-    const cancelledBooking = await prisma.booking.update({
-      where: {
-        id: bookingId,
-      },
+    const cancelled = await tx.booking.update({
+      where: { id: bookingId },
       data: {
         status: "CANCELLED",
         logs: {
@@ -254,17 +193,19 @@ export async function cancelBooking(
       },
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Pengajuan berhasil dibatalkan",
-      data: cancelledBooking,
+    await notifyAdmins(tx, {
+      bookingId,
+      type: "BOOKING_CANCELLED",
+      title: "Pengajuan dibatalkan mahasiswa",
+      message: `${booking.student.name} membatalkan pengajuan "${booking.title}" (${booking.room.name}).`,
     });
-  } catch (error) {
-    console.error("Cancel booking error:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Terjadi kesalahan pada server",
-    });
-  }
+    return cancelled;
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: "Pengajuan berhasil dibatalkan",
+    data: result,
+  });
 }

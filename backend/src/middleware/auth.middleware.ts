@@ -1,6 +1,6 @@
-
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { prisma } from "../lib/prisma";
 
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -19,7 +19,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export function authenticateToken(
+export async function authenticateToken(
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -49,9 +49,30 @@ export function authenticateToken(
       });
     }
 
+    // Pastikan akun masih ada & aktif, dan gunakan role terbaru dari database
+    // (bukan hanya dari isi token) agar penonaktifan akun langsung berlaku.
+    const account = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { id: true, role: true, isActive: true },
+    });
+
+    if (!account) {
+      return res.status(401).json({
+        success: false,
+        message: "Akun tidak ditemukan",
+      });
+    }
+
+    if (!account.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun Anda dinonaktifkan. Hubungi administrator.",
+      });
+    }
+
     req.user = {
-      userId: payload.userId,
-      role: payload.role,
+      userId: account.id,
+      role: account.role,
     };
 
     next();

@@ -1,6 +1,8 @@
 
 import type { Request, Response } from "express";
 import { prisma } from "../lib/prisma";
+import { parse, HttpError } from "../lib/http";
+import { registerSchema, loginSchema } from "../validators/auth";
 import {
   hashPassword,
   comparePassword,
@@ -13,39 +15,18 @@ export async function register(
   res: Response
 ) {
   try {
-    const { name, email, password, nim } = req.body;
-
-    if (!name || !email || !password || !nim) {
-      return res.status(400).json({
-        success: false,
-        message: "Nama, email, password, dan NIM wajib diisi",
-      });
-    }
-
-    if (
-      typeof name !== "string" ||
-      typeof email !== "string" ||
-      typeof password !== "string" ||
-      typeof nim !== "string"
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Format data tidak valid",
-      });
-    }
-
-    if (password.length < 8) {
-      return res.status(400).json({
-        success: false,
-        message: "Password minimal 8 karakter",
-      });
-    }
+    const { name, email, password, nim } = parse<{
+      name: string;
+      email: string;
+      password: string;
+      nim: string;
+    }>(registerSchema, req.body);
 
     const existingUser = await prisma.user.findFirst({
       where: {
         OR: [
-          { email: email.trim().toLowerCase() },
-          { nim: nim.trim() },
+          { email },
+          { nim },
         ],
       },
     });
@@ -61,10 +42,10 @@ export async function register(
 
     const user = await prisma.user.create({
       data: {
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
+        name,
+        email,
         password: hashedPassword,
-        nim: nim.trim(),
+        nim,
         role: "STUDENT",
       },
       select: {
@@ -83,6 +64,7 @@ export async function register(
       data: user,
     });
   } catch (error) {
+    if (error instanceof HttpError) throw error;
     console.error("Register error:", error);
 
     return res.status(500).json({
@@ -98,24 +80,13 @@ export async function login(
   res: Response
 ) {
   try {
-    const { email, password } = req.body;
-
-    if (
-      typeof email !== "string" ||
-      typeof password !== "string" ||
-      !email.trim() ||
-      !password
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Email dan password wajib diisi",
-      });
-    }
+    const { email, password } = parse<{ email: string; password: string }>(
+      loginSchema,
+      req.body
+    );
 
     const user = await prisma.user.findUnique({
-      where: {
-        email: email.trim().toLowerCase(),
-      },
+      where: { email },
     });
 
     if (!user) {
@@ -134,6 +105,13 @@ export async function login(
       return res.status(401).json({
         success: false,
         message: "Email atau password salah",
+      });
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun Anda dinonaktifkan. Hubungi administrator.",
       });
     }
 
@@ -157,6 +135,7 @@ export async function login(
       },
     });
   } catch (error) {
+    if (error instanceof HttpError) throw error;
     console.error("Login error:", error);
 
     return res.status(500).json({
