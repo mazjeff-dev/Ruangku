@@ -13,6 +13,14 @@ enum UserRole {
   ADMIN
 }
 
+enum NotificationType {
+  BOOKING_SUBMITTED
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+  BOOKING_REMINDER
+}
+
 enum BookingStatus {
   PENDING
   APPROVED
@@ -28,12 +36,14 @@ model User {
   password  String   @db.VarChar(255)
   nim       String?  @unique @db.VarChar(30)
   role      UserRole @default(STUDENT)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   bookings       Booking[]    @relation("StudentBookings")
   reviewedBookings Booking[]  @relation("BookingReviewer")
   bookingLogs    BookingLog[]
+  notifications  Notification[]
 }
 
 model Room {
@@ -44,6 +54,8 @@ model Room {
   capacity    Int
   description String?  @db.Text
   facilities  String?  @db.Text
+  imageUrl    String?  @db.VarChar(255)
+  isActive    Boolean  @default(true)
   isAvailable Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -63,6 +75,7 @@ model Booking {
   adminNote   String?       @db.Text
   reviewedBy  Int?
   reviewedAt  DateTime?
+  reminderSentAt DateTime?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
@@ -71,8 +84,10 @@ model Booking {
   reviewer User? @relation("BookingReviewer", fields: [reviewedBy], references: [id])
 
   logs BookingLog[]
+  notifications Notification[]
 
   @@index([roomId, startTime, endTime])
+  @@index([status, startTime])
   @@index([userId, status])
 }
 
@@ -88,4 +103,20 @@ model BookingLog {
   user    User    @relation(fields: [userId], references: [id])
 
   @@index([bookingId, createdAt])
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  bookingId Int?
+  type      NotificationType
+  title     String           @db.VarChar(150)
+  message   String           @db.Text
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRead, createdAt])
 }
