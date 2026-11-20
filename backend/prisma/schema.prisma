@@ -1,0 +1,357 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  ADMIN
+  DOSEN
+  PIMPINAN
+}
+
+enum NotificationType {
+  BOOKING_SUBMITTED
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+  BOOKING_REMINDER
+  BOOKING_WAITLIST_PROMOTED
+  BOOKING_EXTENSION_REQUESTED
+  BOOKING_EXTENSION_APPROVED
+  BOOKING_EXTENSION_REJECTED
+  VIOLATION_RECORDED
+  BOOKING_BLOCKED
+  BOOKING_UNBLOCKED
+  QUEUE_POSITION_CHANGED
+  QUEUE_EXPIRED
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum ViolationType {
+  NO_SHOW
+  OVERSTAY
+  LATE_CANCEL
+}
+
+enum BookingQueueStatus {
+  WAITING
+  PROMOTED
+  CANCELLED
+}
+
+enum BookingExtensionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  name               String   @db.VarChar(100)
+  email              String   @unique @db.VarChar(150)
+  password           String   @db.VarChar(255)
+  nim                String?  @unique @db.VarChar(30)
+  role               UserRole @default(STUDENT)
+  isActive           Boolean  @default(true)
+  emailNotifications Boolean  @default(true)
+  bookingBlockedUntil DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  bookings                   Booking[]            @relation("StudentBookings")
+  reviewedBookings           Booking[]            @relation("BookingReviewer")
+  bookingLogs                BookingLog[]
+  bookingQueueLogs           BookingQueueLog[] @relation("BookingQueueActor")
+  notifications              Notification[]
+  lecturerRooms              RoomLecturer[]
+  bookingQueueEntries        BookingQueue[]
+  bookingExtensionsRequested BookingExtension[]   @relation("ExtensionRequester")
+  bookingExtensionsReviewed  BookingExtension[]   @relation("ExtensionReviewer")
+  updatedBookingRules        BookingRuleSetting[] @relation("BookingRuleUpdatedBy")
+  passwordResetTokens        PasswordResetToken[]
+  createdRoomClosures        RoomClosure[]        @relation("RoomClosureCreator")
+  roomDemandLogs             RoomDemandLog[]
+  violationPoints            ViolationPoint[]     @relation("ViolationOwner")
+  waivedViolationPoints      ViolationPoint[]     @relation("ViolationWaiver")
+}
+
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Room {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  code        String   @unique @db.VarChar(30)
+  location    String   @db.VarChar(150)
+  capacity    Int
+  description String?  @db.Text
+  facilities  String?  @db.Text
+  category    String?  @db.VarChar(60)
+  imageUrl    String?  @db.VarChar(255)
+  isActive    Boolean  @default(true)
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  bookings       Booking[]
+  lecturers      RoomLecturer[]
+  queueEntries   BookingQueue[]
+  operatingHours RoomOperatingHour[]
+  closures       RoomClosure[]
+  demandLogs     RoomDemandLog[]
+
+  @@index([category])
+}
+
+model RoomDemandLog {
+  id        Int      @id @default(autoincrement())
+  roomId    Int
+  userId    Int?
+  startTime DateTime
+  endTime   DateTime
+  createdAt DateTime @default(now())
+
+  room Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model RoomLecturer {
+  roomId     Int
+  userId     Int
+  assignedAt DateTime @default(now())
+
+  room     Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  lecturer User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, userId])
+  @@index([userId])
+}
+
+model Booking {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  roomId         Int
+  title          String        @db.VarChar(150)
+  purpose        String        @db.Text
+  startTime      DateTime
+  endTime        DateTime
+  attendees      Int?
+  status         BookingStatus @default(PENDING)
+  adminNote      String?       @db.Text
+  reviewedBy     Int?
+  reviewedAt     DateTime?
+  reminderSentAt DateTime?
+  checkedInAt    DateTime?
+  checkedOutAt   DateTime?
+  overstayMinutes Int?
+  attendanceRequired Boolean @default(false)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  student  User  @relation("StudentBookings", fields: [userId], references: [id])
+  room     Room  @relation(fields: [roomId], references: [id])
+  reviewer User? @relation("BookingReviewer", fields: [reviewedBy], references: [id])
+
+  logs          BookingLog[]
+  notifications Notification[]
+  queueEntry    BookingQueue?
+  extensions    BookingExtension[]
+  violations    ViolationPoint[]
+
+  @@index([roomId, startTime, endTime])
+  @@index([status, startTime])
+  @@index([userId, status])
+  @@index([userId, startTime])
+  @@index([startTime])
+}
+
+model BookingQueue {
+  id                Int                @id @default(autoincrement())
+  userId            Int
+  roomId            Int
+  title             String             @db.VarChar(150)
+  purpose           String             @db.Text
+  startTime         DateTime
+  endTime           DateTime
+  attendees         Int?
+  status            BookingQueueStatus @default(WAITING)
+  promotedBookingId Int?               @unique
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room            Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  promotedBooking Booking? @relation(fields: [promotedBookingId], references: [id], onDelete: SetNull)
+  logs            BookingQueueLog[]
+
+  @@index([roomId, status, createdAt])
+  @@index([userId, status, createdAt])
+  @@index([status, endTime])
+}
+
+model BookingQueueLog {
+  id        Int      @id @default(autoincrement())
+  queueId   Int
+  actorId   Int
+  action    String   @db.VarChar(50)
+  reason    String   @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  queue BookingQueue @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  actor User         @relation("BookingQueueActor", fields: [actorId], references: [id])
+
+  @@index([queueId, createdAt])
+}
+
+model BookingExtension {
+  id               Int                    @id @default(autoincrement())
+  bookingId        Int
+  requestedBy      Int
+  requestedEndTime DateTime
+  status           BookingExtensionStatus @default(PENDING)
+  reviewedBy       Int?
+  reviewedAt       DateTime?
+  note             String?                @db.Text
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  requester User    @relation("ExtensionRequester", fields: [requestedBy], references: [id], onDelete: Cascade)
+  reviewer  User?   @relation("ExtensionReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, status, createdAt])
+  @@index([requestedBy, createdAt])
+}
+
+model BookingRuleSetting {
+  id                Int      @id @default(1)
+  minMinutes        Int
+  maxHours          Int
+  maxDaysAhead      Int
+  maxActiveBookings Int      @default(3)
+  maxQueueEntries   Int      @default(3)
+  gracePeriodMinutes Int @default(15)
+  noShowPoints Int @default(2)
+  overstayPoints Int @default(1)
+  lateCancelPoints Int @default(1)
+  suspendThreshold Int @default(5)
+  suspendDays Int @default(7)
+  lateCancelWindowMinutes Int @default(30)
+  updatedBy         Int?
+  updatedAt         DateTime @updatedAt
+
+  updater User? @relation("BookingRuleUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+}
+
+model RoomOperatingHour {
+  id        Int     @id @default(autoincrement())
+  roomId    Int
+  dayOfWeek Int
+  openTime  String  @db.VarChar(5)
+  closeTime String  @db.VarChar(5)
+  isClosed  Boolean @default(false)
+  room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, dayOfWeek])
+  @@index([roomId])
+}
+
+model GlobalOperatingHours {
+  id            Int      @id @default(1)
+  openTime      String   @db.VarChar(5)
+  closeTime     String   @db.VarChar(5)
+  operatingDays String   @db.VarChar(20)
+  updatedAt     DateTime @updatedAt
+}
+
+model RoomClosure {
+  id        Int      @id @default(autoincrement())
+  roomId    Int?
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  reason    String   @db.VarChar(500)
+  createdBy Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room    Room? @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  creator User? @relation("RoomClosureCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([roomId, startDate, endDate])
+}
+
+model BookingLog {
+  id        Int      @id @default(autoincrement())
+  bookingId Int
+  userId    Int
+  action    String   @db.VarChar(50)
+  note      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([bookingId, createdAt])
+}
+
+model ViolationPoint {
+  id         Int           @id @default(autoincrement())
+  userId     Int
+  bookingId  Int
+  type       ViolationType
+  points     Int
+  reason     String        @db.VarChar(500)
+  createdAt  DateTime      @default(now())
+  waivedBy   Int?
+  waivedAt   DateTime?
+  waivedNote String?       @db.VarChar(500)
+
+  user    User    @relation("ViolationOwner", fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  waiver  User?   @relation("ViolationWaiver", fields: [waivedBy], references: [id], onDelete: SetNull)
+
+  @@index([userId, waivedAt])
+  @@index([bookingId])
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  bookingId Int?
+  type      NotificationType
+  title     String           @db.VarChar(150)
+  message   String           @db.Text
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRead, createdAt])
+}

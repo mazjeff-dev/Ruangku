@@ -1,0 +1,3 @@
+ALTER TABLE `BookingRuleSetting`
+    ADD COLUMN `maxActiveBookings` INTEGER NOT NULL DEFAULT 3,
+    ADD COLUMN `maxQueueEntries` INTEGER NOT NULL DEFAULT 3;
